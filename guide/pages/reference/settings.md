@@ -1,0 +1,220 @@
+# Settings
+
+Open Settings from the sidebar (☰ at the top left). It has six tabs: **Appearance**,
+**Prompts**, **Models**, **Results**, **Performance** and **Advanced**.
+
+## Appearance
+
+<figure markdown>
+  ![Settings → Appearance](../img/settings-appearance.png){ .screen }
+</figure>
+
+### Theme
+
+**Follow the system**, **Dark**, **Black (AMOLED)** or **Light**. Black is Dark with true-black
+backgrounds, which saves power on an OLED screen. The canvas follows it: white under Light, true black
+under Black.
+
+### Accent colour
+
+The colour of buttons, highlights and the selected node: **Violet** (the default), **Blue**, **Teal**,
+**Orange** or **Pink**, or on Android 12 and up **From your wallpaper** (Material You). It works with any
+theme. The colours of node types and model families stay the same whatever you pick, so a screenshot
+reads the same on every phone.
+
+### Views
+
+**Open on Default** or **Open on Advanced**: the view the app starts on (asked the first time).
+**Default view top to bottom** shows every step one under another instead of swiping between them
+(on for new installs). It changes the Default view only; the Advanced view's node sheet always
+swipes side to side.
+**Hide chat view** takes Chat off the view button, leaving Default and Advanced.
+**Keep the edits of each flow** (on): opening another model or flow keeps the changes you made to the one you
+leave, and they come back when you open it again. Off: each opens fresh. A saved flow always opens as you saved it.
+
+## Prompts
+
+<figure markdown>
+  ![Settings → Prompts](../img/settings-prompts.png){ .screen }
+</figure>
+
+### Tag autocomplete
+
+While you type in a prompt box, matching tags appear under it as a row of chips, the most used
+first; tap one to replace the word you were typing (`long ha` → `long hair, `). Tags with
+brackets go in escaped, so `ganyu (genshin impact)` stays a name and not a weight.
+
+- **Tag dictionary**: tap **Download** for Danbooru's tag list (3.4 MB, 140,000 tags with their
+  aliases, from a1111-sd-webui-tagcomplete), or **Import CSV** to use your own in the same
+  `tag,category,count,aliases` form. Suggestions are off until one is installed.
+- **Translation dictionary** (optional). **Import CSV** with `tag,translation` lines, and you can
+  type in your own language to find a tag: `长发` suggests `long hair`.
+- The switch turns suggestions off without deleting either dictionary.
+
+### Translation
+
+Nightmare can translate a **Russian or Chinese** prompt to English on the phone, offline. SD
+1.5 and SDXL only read English. The **文A** button on a prompt box does it; the same button
+undoes it. Weights like `(long hair:1.2)` and English tags pass through untouched.
+
+This section lists the two translation models (Mozilla's Firefox Translations: 37 MB for
+Russian, 55 MB for Chinese) with Download and Delete. If you tap 文A before a model is installed,
+the app offers to download it and translates as soon as it lands. About 15 ms a prompt; nothing
+leaves the phone.
+
+### Embeddings
+
+Import textual-inversion files and use them by name in a prompt. [Embeddings](../models/loras.md#embeddings)
+
+## Models
+
+<figure markdown>
+  ![Settings → Models](../img/settings-models.png){ .screen }
+</figure>
+
+### Models folder
+
+Where downloaded and imported models are kept:
+
+- **App storage (private)**: the default. Nothing else can see the files, and **uninstalling
+  the app deletes them**.
+- **Download/Nightmare (visible)**: any file manager can reach them and they survive an
+  uninstall. Needs **All files access**, which is asked for only when you choose this.
+
+**Local Dream's models are used where they are.** If you also use Local Dream (3.0 alpha.5 or
+later) with its models in **Download/LocalDream**, Nightmare lists them, marked **Local Dream**, and
+runs them from there without a second download. It never changes or deletes them. Delete them in
+Local Dream. This needs All files access, like Download/Nightmare.
+
+Switching offers to **move** the models you already have, with the size, a progress bar and
+Cancel; the phone needs free space for the largest model while it moves. Loading speed is the
+same in either place.
+
+### Download source
+
+Where model files are fetched from: **Hugging Face** (default), **hf-mirror.com**, or a
+**Custom** base address. Tap **Custom**, type the address (it starts as `https://`), and it is
+saved when you press Done or leave the field. Change it if Hugging Face is slow or blocked where you are. It applies
+to every model, upscaler, segmenter, pose detector, depth estimator, ControlNets, translation model, the describe and tagger models, the tag dictionary and the video models. The DiT engine (the 23 MB download the FLUX.2, Z-Image, Qwen,
+Krea 2, Anima DiT and Wan models need) comes from GitHub, or from Hugging Face when GitHub cannot be
+reached; with **hf-mirror.com** chosen it comes from the mirror first.
+
+### CivitAI
+
+Used by **Search online** in a node's LoRA list ([LoRAs](../models/loras.md)):
+
+- **CivitAI API key**: most CivitAI LoRAs download only with your own free key (civitai.com →
+  Account settings → API Keys). It is kept on this phone and sent only to CivitAI.
+- **Show mature content**: off by default. When on, searches go to civitai.red, which
+  includes NSFW LoRAs and previews, and Models lists the models made for adult content.
+
+### LoRAs
+
+Import `.safetensors` adapters; the list shows each one's size, and Delete removes it.
+[LoRAs](../models/loras.md)
+
+## Results
+
+What a saved or shared picture carries.
+
+### Saved pictures
+
+| switch | default | what it does |
+|---|---|---|
+| **Write how it was made into the picture** | on | A saved or shared picture carries its prompt, model, seed, steps, sampler, LoRAs, phone and the whole flow in the PNG. CivitAI and A1111 read it, and Nightmare reads it back when the picture is imported. It also marks the picture as AI-made |
+
+### Sharing
+
+| switch | default | what it does |
+|---|---|---|
+| **Credit Nightmare on shared pictures** | on | Every picture you share gets a thin dark strip added under it (nothing in the picture is covered): the app icon and "Made with Nightmare Mobile". Fill in **Your name (optional)**, up to 30 characters, and it reads "Created by *your name* with Nightmare Mobile". Pictures saved to the gallery, clips and shared flows are left as they are |
+| **Send how it was made as text** | off | Sharing a picture also sends everything its Info shows (prompt, negative, model, seed, steps, sampler, size, times) as the message text, which chat apps such as Telegram and WhatsApp show with the picture. Several pictures shared at once send each one's, a blank line between |
+
+## Performance
+
+### Memory
+
+Three switches the same as LocalDream's, whose defaults are set **from your phone's RAM**, and one for video.
+
+| switch | default | what it does |
+|---|---|---|
+| **SDXL low RAM mode** | on under 16 GB, off at 16 GB+ | Loads each part of an SDXL model on demand and frees it after use. Required under 16 GB, so there it is always on and cannot be turned off: without it SDXL fills the phone's memory and Android closes your apps. Disables the live preview while it renders |
+| **Anima low RAM mode** | on under 16 GB, off at 16 GB+ | The same, for Anima |
+| **Anima DiT sequential loading** | off | Only with Anima low RAM mode: never keeps both halves of Anima's model in memory at once. Turn it on if you have 12 GB and Anima still cannot run. Slower per step |
+| **Video: stream the model** | off | Wan reads its model from storage step by step instead of holding it in memory. About 30% slower. Turn it on if your videos come out as a coloured grid or noise. Some clips stream whichever way it is set, and the run log says so: clips too big to hold, every clip below an 8 Elite, Wan 2.2 14B and MiniMax H3 |
+
+Changing a switch takes effect on the next Run (a loaded model of that family is let go). More
+in [Memory and speed](memory.md).
+
+On a phone with 12 GB or more, Anima keeps its model loaded between renders: every render after
+the first is about 20 to 40 percent faster, and the same picture. It holds about 3 GB while the
+model stays loaded. A render with a LoRA loads it again each time.
+
+### Speed
+
+| switch | default | what it does |
+|---|---|---|
+| **Predict some steps (Anima, MOSS-Image, 8 steps or more)** | off | After the first 4 steps, some steps are predicted from the earlier ones instead of being run. About 15 to 30 percent faster (Anima at 10 steps the most, MOSS-Image at 8 about 15), the same picture a little softer. Renders under 8 steps are not changed |
+
+### Heat
+
+A video render keeps the phone's processors busy for minutes, and the phone gets hot. The chip
+protects itself; the battery does not, and heat above about 45 °C wears it out faster. The run
+log warns when the battery is already warm (40 °C) before a clip, and again when a clip took it
+to 45 °C. Keep the phone off the charger and out of the sun while it renders.
+
+| switch | default | what it does |
+|---|---|---|
+| **Pause video when the battery is hot** | off | A video render waits between steps when the battery reaches 45 °C and carries on when it cools to 40 °C. Slower in a warm room, easier on the battery. Not for Neodragon, whose clips take seconds |
+| **Show the chip's temperatures** | off | The RAM line (run bar and sidebar) shows the CPU, GPU and NPU, each the hottest of its sensors, instead of the battery's temperature. Handy with a phone cooler, which keeps the battery cool while the chip works. Only offered where the phone lets apps read these sensors. The heat warnings above still follow the battery |
+
+### When a run ends
+
+| switch | default | what it does |
+|---|---|---|
+| **Sound when a run ends** | off | Plays a sound when a Run or a sweep of 15 seconds or longer finishes, and a different one if it fails. **Choose** beside each opens the phone's own sound list (notification and alarm sounds). With Nightmare in the background, a notification also says how long it took, or why it failed. A run you cancel ends quietly |
+
+Any run that takes longer than 10 seconds also shows a progress bar in the notification shade, like a download: what is running, its step and the time so far. It goes when the run ends. The phone's notification settings for Nightmare (Generation progress) can hide it.
+
+### Try the NPU for DiT models (test)
+
+Only on the 8 Gen 1 and 8+ Gen 1, whose NPU has so far hung on the DiT models (they run on the GPU or CPU there).
+This tries the NPU again. If a render stops moving, press **Cancel**: the app turns the switch off and says so,
+and the next Run uses the GPU or CPU.
+
+### GPU
+
+Shown on phones with an OpenCL graphics driver (Snapdragon). FLUX.2 Klein 4B and NitroFusion 2 can render on the
+graphics chip (Adreno) instead of the NPU. Phones older than the Snapdragon 8 Gen 2, whose NPU cannot run these
+models, use it for them whatever the switch says: there it replaces the CPU, which took up to 20 minutes a picture.
+The render is cut into short pieces so the screen keeps responding while it runs. On a Galaxy S25 Ultra, Klein 4B
+at 1024 x 1024 takes about 4 minutes this way, slower than its NPU.
+
+| switch | default | what it does |
+|---|---|---|
+| **Use the GPU for DiT models** | off | FLUX.2 Klein 4B and NitroFusion 2 render on the GPU. A second engine (23 MB) and the Q4_0 model download the first time. Turned off again, the NPU runs that Q4_0 as it is, with nothing to download or repair. For the NPU's own faster build, delete the model and download it again with the switch off. Both engines stay on the phone, so switching back and forth downloads nothing after the first time. A Klein edit with reference pictures still runs on the NPU, where the GPU ran out of memory at 1024x1024 |
+| **Fast decoder on the GPU** | on | Turns the finished picture into pixels with a tiny decoder (taef2, taef1) in under 30 seconds at 1024 x 1024. Off uses the full decoder, which takes minutes on the GPU |
+
+### Keep rendering in the background
+
+Shown only when your phone's battery manager may stop the app while it is not on screen. Tap
+**Allow in background** so a render in progress, or a loaded model, is not cut off when you
+switch apps.
+
+## Advanced
+
+<figure markdown>
+  ![Settings → Advanced](../img/settings-advanced.png){ .screen }
+</figure>
+
+### API
+
+**Listen on the local network** lets another device on your Wi-Fi or tailnet run your flows.
+Off by default. When on, it shows the address and the token to use. **Allow browser pages** (off by
+default) lets a web page in a browser call it too; every call still needs the token. [Local API](api.md)
+
+### Clean temp files
+
+Finds part-finished downloads, scratch files and the outputs of the app's test tools, and deletes them after asking. Your models,
+pictures, saved flows and embeddings are never touched. (An unfinished download then starts
+again from the beginning.)

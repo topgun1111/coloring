@@ -1,0 +1,164 @@
+name: Android APK (CI)
+
+on:
+  push:
+    branches: ['**']
+    paths-ignore: ['docs/**', '**/*.md']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightmare-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+      # Do not use android-actions/setup-android@v3 here: its attempt to
+      # install the retired 'tools' package fails on current hosted runners.
+      - name: Install exact Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?GitHub Ubuntu runner must provide Android SDK}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -path '*/bin/sdkmanager' -type f | sort -V | tail -1)"
+          fi
+          test -x "$SDKMANAGER" || { echo '::error::sdkmanager not found'; exit 1; }
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || test "${PIPESTATUS[1]}" -eq 0
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
+            'platforms;android-35' 'build-tools;35.0.0' \
+            'ndk;27.2.12479018' 'cmake;3.22.1'
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -d "$ANDROID_HOME/ndk/27.2.12479018"
+      - name: Verify source prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/build.gradle.kts
+          test -f tools/build_foxlet.sh
+          test -f tools/foxlet-overrides.patch
+          test -f gradlew
+          test -f app/src/main/java/com/abrah/nightmare/coloring/ColoringStudioActivity.kt
+      - name: Build Foxlet from pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          bash tools/build_foxlet.sh
+          AAR=app/libs/foxlet-release.aar
+          test -s "$AAR" || { echo '::error::Foxlet AAR missing'; exit 1; }
+          unzip -t "$AAR" >/dev/null || { echo '::error::Foxlet AAR invalid ZIP'; exit 1; }
+          unzip -Z1 "$AAR" | grep -qx 'AndroidManifest.xml'
+          unzip -Z1 "$AAR" | grep -qx 'classes.jar'
+          echo "Foxlet AAR size: $(stat -c %s "$AAR") bytes"
+      - name: Set CI version
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=$(sed -n 's/.*versionName = providers.gradleProperty("ciVersionName").orNull ?: "\([^"]*\)".*/\1/p' app/build.gradle.kts)
+          test -n "$BASE"
+          # Run IDs are monotonic and unique across all workflows, including reruns.
+          CODE=$((1000000 + GITHUB_RUN_ID % 1000000000))
+          test "$CODE" -le 2100000000
+          echo "CI_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
+          echo "CI_VERSION_NAME=${BASE}-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+      - name: Native AI backend availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          BACKEND=app/src/main/jniLibs/arm64-v8a/libstable_diffusion_core.so
+          if [[ -s "$BACKEND" ]]; then
+            file "$BACKEND"
+            file "$BACKEND" | grep -q 'ELF 64-bit' || { echo '::error::Backend is not a 64-bit ELF'; exit 1; }
+            echo 'Native AI backend staged.'
+          else
+            echo '::warning::Native AI backend missing. Resulting debug APK can be used for UI testing, NOT AI image generation.'
+            echo 'AI_BACKEND_PRESENT=false' >> "$GITHUB_ENV"
+          fi
+      - name: Compile Kotlin and Android resources
+        run: ./gradlew :app:compileDebugKotlin :app:processDebugMainManifest --stacktrace -PciVersionCode="$CI_VERSION_CODE" -PciVersionName="$CI_VERSION_NAME"
+      - name: Run unit tests with full Robolectric diagnostics
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p ci-diagnostics
+          cat > ci-diagnostics/test-logging.init.gradle <<'EOF'
+          allprojects {
+              tasks.withType(Test).configureEach {
+                  testLogging {
+                      events "failed", "skipped"
+                      exceptionFormat "full"
+                      showExceptions true
+                      showCauses true
+                      showStackTraces true
+                  }
+                  systemProperty "robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2"
+                  systemProperty "robolectric.dependency.repo.id", "central"
+              }
+          }
+          EOF
+          ./gradlew :app:testDebugUnitTest --stacktrace --info \
+            --init-script ci-diagnostics/test-logging.init.gradle \
+            -PciVersionCode="$CI_VERSION_CODE" -PciVersionName="$CI_VERSION_NAME" \
+            2>&1 | tee ci-diagnostics/unit-tests.log
+      - name: Diagnose Robolectric artifact resolution
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p ci-diagnostics
+          {
+            echo '=== Robolectric / android-all errors ==='
+            grep -Ein -C 8 'MavenArtifactFetcher|android-all|robolectric|FileNotFoundException|HTTP 404|Could not (get|find|resolve)' ci-diagnostics/unit-tests.log | tail -n 500 || true
+            echo '=== Maven Central reachability (not proof of artifact availability) ==='
+            curl --location --silent --show-error --output /dev/null --write-out 'Maven Central HTTP %{http_code}\n' --max-time 20 https://repo.maven.apache.org/maven2/org/robolectric/android-all/maven-metadata.xml || true
+          } | tee ci-diagnostics/robolectric-summary.txt
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace -PciVersionCode="$CI_VERSION_CODE" -PciVersionName="$CI_VERSION_NAME"
+      - name: Verify APK contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/debug/*.apk)
+          test "${#apks[@]}" -eq 1 || { echo '::error::Expected exactly one APK'; exit 1; }
+          unzip -t "${apks[0]}" >/dev/null
+          unzip -Z1 "${apks[0]}" | grep -q '^classes.*\.dex$'
+          echo "APK verified: ${apks[0]}"
+          if [[ "${AI_BACKEND_PRESENT:-true}" == false ]]; then echo "::warning::APK is UI-only: native AI inference backend absent"; fi
+      - name: Upload APK (successful builds only)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightmare-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test diagnostics (including failed builds)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightmare-test-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            ci-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14

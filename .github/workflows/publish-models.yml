@@ -1,0 +1,88 @@
+name: Publish models
+
+# Actions -> Publish models -> Run workflow. Paste DIRECT download links (ONNX files) for the models you have.
+# Empty fields are skipped. Files are uploaded to the "models-v1" release (kept as a pre-release so it is never
+# mistaken for an app release), and sha256 + size are written into app/src/main/assets/models.json.
+on:
+  workflow_dispatch:
+    inputs:
+      informative_drawings:
+        description: "informative_drawings.onnx URL"
+        required: false
+      mobile_sam_encoder:
+        description: "mobile_sam_encoder.onnx URL"
+        required: false
+      mobile_sam_decoder:
+        description: "mobile_sam_decoder.onnx URL"
+        required: false
+      realesrgan_x4v3:
+        description: "realesrgan_general_x4v3.onnx URL"
+        required: false
+      sd15_unet:
+        description: "sd15_unet_int8.onnx URL"
+        required: false
+      sd15_text_vae:
+        description: "sd15_text_vae.onnx URL"
+        required: false
+      sd15_controlnet_lineart:
+        description: "sd15_controlnet_lineart.onnx URL"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: models-v1
+      U_INFORMATIVE: ${{ inputs.informative_drawings }}
+      U_SAM_ENC: ${{ inputs.mobile_sam_encoder }}
+      U_SAM_DEC: ${{ inputs.mobile_sam_decoder }}
+      U_ESRGAN: ${{ inputs.realesrgan_x4v3 }}
+      U_SD_UNET: ${{ inputs.sd15_unet }}
+      U_SD_TEXT: ${{ inputs.sd15_text_vae }}
+      U_SD_CN: ${{ inputs.sd15_controlnet_lineart }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download models
+        run: |
+          set -euo pipefail
+          mkdir -p models
+          get() { # $1=url $2=filename
+            [ -z "$1" ] && return 0
+            case "$1" in https://*) ;; *) echo "::error::Only https URLs allowed: $2"; exit 1 ;; esac
+            echo "Downloading $2"
+            curl -fL --retry 3 -o "models/$2" "$1"
+          }
+          get "$U_INFORMATIVE" informative_drawings.onnx
+          get "$U_SAM_ENC"     mobile_sam_encoder.onnx
+          get "$U_SAM_DEC"     mobile_sam_decoder.onnx
+          get "$U_ESRGAN"      realesrgan_general_x4v3.onnx
+          get "$U_SD_UNET"     sd15_unet_int8.onnx
+          get "$U_SD_TEXT"     sd15_text_vae.onnx
+          get "$U_SD_CN"       sd15_controlnet_lineart.onnx
+          ls -lh models
+          [ -n "$(ls -A models)" ] || { echo "::error::No URL given"; exit 1; }
+          # GitHub release assets are limited to 2 GB each
+          find models -type f -size +2000M -print -exec false {} + || { echo "::error::A file exceeds 2 GB"; exit 1; }
+
+      - name: Upload to release
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --prerelease --title "Models v1" --notes "AI model files downloaded by the app. Not an app release."
+          gh release upload "$TAG" models/* --clobber
+
+      - name: Update manifest
+        run: |
+          set -euo pipefail
+          bash scripts/make-manifest.sh models
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/assets/models.json
+          git commit -m "models: update manifest" || echo "No manifest change"
+          git push

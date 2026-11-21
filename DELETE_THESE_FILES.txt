@@ -1,0 +1,1 @@
+Delete .github/workflows/guide.yml and any previous APK workflow YAML besides android-apk.yml. Keep dit-engine.yml (manual native engine build).

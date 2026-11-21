@@ -1,0 +1,594 @@
+package com.abrah.nightmare
+
+import android.content.Context
+
+/**
+ * ⭐ The app's own settings, as opposed to the graph's.
+ *
+ * ⚠⚠ A separate store from `SelectedModel`, which is also a preference but is
+ * a property of the WORK — a graph names its checkpoint, and opening someone
+ * else's flow moves it. Theme is a property of the person, and nothing a
+ * workflow does should ever change it.
+ *
+ * ⚠ Read once into a mutable state at start-up and written through, like
+ * `SelectedModel`: a `SharedPreferences` read on every recomposition is a
+ * disk touch in the draw path.
+ */
+object Prefs {
+
+    private const val FILE = "nightmare.prefs"
+    private const val KEY_THEME = "theme"
+    private const val KEY_ACCENT = "accent"
+    private const val KEY_MIRROR = "download_base"
+
+    /**
+     * ⚠⚠ THREE values, not a boolean. "Follow the system" is the default and
+     * it is not expressible as on/off — a switch alone would silently pin the
+     * app to whatever the phone happened to be when it was first opened, and
+     * the user would have no way back to following.
+     */
+    /** ⭐ BLACK: dark with true-black backgrounds for OLED screens (a tester's wish, 2026-10-24). Stored by name. */
+    enum class Theme { SYSTEM, DARK, BLACK, LIGHT }
+
+    /**
+     * ⭐ The accent colour, apart from light or dark (a tester's wish, 2026-10-24: "too monotonous"). VIOLET is the
+     * default look; WALLPAPER is Android 12+'s Material You, offered only there. Stored by name. `ui/Accents.kt`.
+     */
+    enum class Accent { VIOLET, WALLPAPER, BLUE, TEAL, ORANGE, PINK }
+
+    @Volatile var accent: Accent = Accent.VIOLET
+        private set
+
+    /**
+     * ⚠ Backing state so Compose recomposes; loaded by [load] before first draw.
+     * ⚠ Every in-memory value is @Volatile: the API's, the agent's and OpService's threads read them too.
+     */
+    @Volatile var theme: Theme = Theme.SYSTEM
+        private set
+
+    fun load(context: Context) {
+        val raw = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(KEY_THEME, null)
+        // ⚠ An unknown value falls back rather than throwing. A preferences
+        // file survives a downgrade, and a theme nobody recognises must not
+        // stop the app opening.
+        theme = Theme.entries.firstOrNull { it.name == raw } ?: Theme.SYSTEM
+        accent = Accent.entries.firstOrNull {
+            it.name == context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(KEY_ACCENT, null)
+        } ?: Accent.VIOLET
+        downloadBase = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getString(KEY_MIRROR, null)?.takeIf { it.isNotBlank() } ?: HF_ORIGIN
+        civitaiKey = loadCivitaiKey(context)
+        matureContent = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean(KEY_MATURE, false)
+        val p = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+        defaultView = MainView.entries.firstOrNull { it.name == p.getString(KEY_VIEW, null) }
+        // ⭐ Top to bottom for NEW users (the user, 2026-10-13); someone who has already been asked
+        // which view to open on keeps the side-to-side pages they had. Written once either way, so
+        // the answer never changes under them.
+        if (!p.contains(KEY_NODES_VERTICAL)) {
+            p.edit().putBoolean(KEY_NODES_VERTICAL, !p.contains(KEY_VIEW)).apply()
+        }
+        nodesVertical = p.getBoolean(KEY_NODES_VERTICAL, false)
+        hideChat = p.getBoolean(KEY_HIDE_CHAT, false)
+        moreOptionsOpen = p.getBoolean(KEY_MORE_OPTIONS, false)
+        samplingOpen = p.getBoolean(KEY_SAMPLING_OPEN, false)
+        postOpen = p.getBoolean(KEY_POST_OPEN, false)
+        wanStream = p.getBoolean(KEY_WAN_STREAM, false)
+        heatPause = p.getBoolean(KEY_HEAT_PAUSE, false)
+        runSound = p.getBoolean(KEY_RUN_SOUND, false)
+        chipTemps = p.getBoolean(KEY_CHIP_TEMPS, false)
+        ditGpu = p.getBoolean(KEY_DIT_GPU, ditGpuDefault())
+        v69Npu = p.getBoolean(KEY_V69_NPU, false)
+        ditTaesd = p.getBoolean(KEY_DIT_TAESD, true)
+        ditSpectrum = p.getBoolean(KEY_DIT_SPECTRUM, false)
+        pngInfo = p.getBoolean(KEY_PNG_INFO, true)
+        keepFlowEdits = p.getBoolean(KEY_KEEP_FLOW_EDITS, true)
+        shareCredit = p.getBoolean(KEY_SHARE_CREDIT, true)
+        shareText = p.getBoolean(KEY_SHARE_TEXT, false)
+        shareName = p.getString(KEY_SHARE_NAME, null).orEmpty().take(SHARE_NAME_MAX)
+    }
+
+    /** ⭐ A sampler's "More options" fold open (the user, 2026-10-17: closed by default, remembered). */
+    @Volatile var moreOptionsOpen: Boolean = false
+        private set
+
+    fun setMoreOptionsOpen(context: Context, value: Boolean) {
+        moreOptionsOpen = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_MORE_OPTIONS, value).apply()
+    }
+
+    /** ⭐ Whether the person accepted [modelId]'s licence ([ModelSpec.licence]); asked before its first download. */
+    fun licenceAccepted(context: Context, modelId: String): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean(KEY_LICENCE + modelId, false)
+
+    fun acceptLicence(context: Context, modelId: String) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_LICENCE + modelId, true).apply()
+    }
+
+    private const val KEY_LICENCE = "licence_accepted_"
+
+    /** ⭐ The image samplers' Scheduler, seed and CFG fold: closed by default, open or closed remembered. */
+    @Volatile var samplingOpen: Boolean = false
+        private set
+
+    fun setSamplingOpen(context: Context, value: Boolean) {
+        samplingOpen = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_SAMPLING_OPEN, value).apply()
+    }
+
+    /**
+     * ⭐ The Output node's Post-processing fold: closed by default, remembered (the user, 2026-10-27). ⚠ Its own key:
+     * it shared [moreOptionsOpen], so opening a sampler's More options opened Post-processing too.
+     */
+    @Volatile var postOpen: Boolean = false
+        private set
+
+    fun setPostOpen(context: Context, value: Boolean) {
+        postOpen = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_POST_OPEN, value).apply()
+    }
+
+    // ---- the three views (the user's design, 2026-10-08) ----------------------
+
+    private const val KEY_VIEW = "default_view"
+    private const val KEY_NODES_VERTICAL = "nodes_vertical"
+    private const val KEY_HIDE_CHAT = "hide_chat"
+    private const val KEY_MORE_OPTIONS = "more_options_open"
+    private const val KEY_SAMPLING_OPEN = "sampling_open"
+    private const val KEY_POST_OPEN = "post_processing_open"
+
+    /**
+     * ⭐ What the app opens on. NULL until the person has been asked (first launch: Nodes for
+     * beginners, Graph for advanced). ⚠ Agent is never a default — it needs a key first.
+     */
+    @Volatile var defaultView: MainView? = null
+        private set
+
+    fun setDefaultView(context: Context, value: MainView) {
+        defaultView = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(KEY_VIEW, value.name).apply()
+    }
+
+    /** ⭐ The Nodes view top to bottom instead of swiped left to right. */
+    @Volatile var nodesVertical: Boolean = false
+        private set
+
+    fun setNodesVertical(context: Context, value: Boolean) {
+        nodesVertical = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_NODES_VERTICAL, value).apply()
+    }
+
+    /** ⭐ Chat taken off the view button (the user, 2026-10-13): Default and Advanced only. */
+    @Volatile var hideChat: Boolean = false
+        private set
+
+    fun setHideChat(context: Context, value: Boolean) {
+        hideChat = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(KEY_HIDE_CHAT, value).apply()
+    }
+
+    // ---- the LoRA browser (`docs/LORA-BROWSER.md`) ---------------------------
+
+    private const val KEY_CIVITAI_KEY = "civitai_api_key"
+    private const val KEY_CIVITAI_SEALED = "civitai_api_key_sealed"
+    private const val KEY_MATURE = "civitai_mature"
+
+    /**
+     * ⭐ The person's own CivitAI API key — 32 of the 40 most-downloaded LoRAs
+     * refuse a download without one (measured 2026-10-07). Blank = none.
+     * ⚠ App-private preferences, never logged, never put in a URL: it travels
+     * only as an `Authorization` header to CivitAI ([LoraSources]).
+     */
+    @Volatile var civitaiKey: String = ""
+        private set
+
+    fun setCivitaiKey(context: Context, value: String) {
+        civitaiKey = value.trim()
+        val e = context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+        val sealed = civitaiKey.takeIf { it.isNotEmpty() }?.let { runCatching { com.abrah.nightmare.agent.KeyVault.seal(it) }.getOrNull() }
+        when {
+            civitaiKey.isEmpty() -> e.remove(KEY_CIVITAI_KEY).remove(KEY_CIVITAI_SEALED)
+            sealed != null -> e.putString(KEY_CIVITAI_SEALED, sealed).remove(KEY_CIVITAI_KEY)
+            // ⚠ No Keystore (a JVM test): kept plain as before rather than lost.
+            else -> e.putString(KEY_CIVITAI_KEY, civitaiKey).remove(KEY_CIVITAI_SEALED)
+        }
+        e.apply()
+    }
+
+    /**
+     * ⭐ Sealed with the agent's [agent.KeyVault] (AES-GCM, key in the Android Keystore), as the LLM key is: it sat in
+     * plain prefs. ⚠ A key saved plain by an older build is read, then sealed in place.
+     */
+    private fun loadCivitaiKey(context: Context): String {
+        val p = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+        p.getString(KEY_CIVITAI_SEALED, null)?.let { s -> runCatching { com.abrah.nightmare.agent.KeyVault.open(s) }.getOrNull()?.let { return it } }
+        val plain = p.getString(KEY_CIVITAI_KEY, null).orEmpty()
+        if (plain.isNotEmpty()) {
+            runCatching { com.abrah.nightmare.agent.KeyVault.seal(plain) }.getOrNull()?.let { sealed ->
+                p.edit().putString(KEY_CIVITAI_SEALED, sealed).remove(KEY_CIVITAI_KEY).apply()
+            }
+        }
+        return plain
+    }
+
+    /**
+     * ⭐ Show mature content — search civitai.red instead of civitai.com. OFF by
+     * default (the user's call, 2026-10-07): since April 2026 civitai.com
+     * answers with SFW results only, civitai.red with everything.
+     */
+    @Volatile var matureContent: Boolean = false
+        private set
+
+    fun setMatureContent(context: Context, value: Boolean) {
+        matureContent = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_MATURE, value).apply()
+    }
+
+    fun setAccent(context: Context, value: Accent) {
+        accent = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putString(KEY_ACCENT, value.name).apply()
+    }
+
+    fun setTheme(context: Context, value: Theme) {
+        theme = value
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putString(KEY_THEME, value.name).apply()
+    }
+
+    // ---- download mirror -------------------------------------------------
+
+    /**
+     * ⭐⭐ **Where model files are fetched from.** Asked for 2026-09-20:
+     * huggingface.co is unreachable from mainland China, and upstream
+     * `local-dream` has offered a mirror since long before this fork
+     * (`ui/screens/ModelListScreen.kt`, "Download source").
+     *
+     * ⚠⚠ **Ours is a REWRITE, not a base.** Upstream stores a base URL and
+     * builds every model URL from it. This catalogue stores whole URLs across
+     * eight constants in five files ([ModelCatalog.SD15_BASE_URL] and friends,
+     * [Upscalers], [segment.Segmenter], [npu.VideoInstaller]), so rebasing them
+     * all would mean touching every one and keeping them in step forever. ⇒
+     * one substitution where a connection is opened ([apply] — in
+     * [ModelInstaller.fetch] and in [LoraSources]'s Hugging Face calls), which
+     * cannot go out of step with a catalogue entry because it never reads one.
+     *
+     * ⚠ Only `huggingface.co` is rewritten: a mirror of Hugging Face says nothing
+     * about GitHub. The DiT engine has a copy on Hugging Face as well
+     * ([DitEngine.HF_URL], since 1.6.159), tried first when a mirror is set and
+     * second otherwise ([DitEngine.sources]); its GitHub URL is never rewritten.
+     */
+    const val HF_ORIGIN = "https://huggingface.co/"
+
+    /** ⚠ hf-mirror.com is the one upstream offers, so it is the one we offer. */
+    const val HF_MIRROR = "https://hf-mirror.com/"
+
+    /**
+     * The chosen origin, always ending in `/`. [HF_ORIGIN] unless changed.
+     * ⚠ A custom value is whatever the user typed, so it is normalised on the
+     * way in rather than trusted on the way out.
+     */
+    @Volatile var downloadBase: String = HF_ORIGIN
+        private set
+
+    fun setDownloadBase(context: Context, value: String) {
+        downloadBase = normalise(value)
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit()
+            .putString(KEY_MIRROR, downloadBase).apply()
+    }
+
+    /**
+     * ⭐⭐⭐ The substitution itself — every download goes through this.
+     *
+     * ⚠⚠ Pure and total: an unknown host, an empty setting or the default
+     * all return [url] unchanged, because a download that silently goes
+     * nowhere is worse than one that ignores a preference.
+     */
+    fun apply(url: String): String =
+        if (downloadBase == HF_ORIGIN || !url.startsWith(HF_ORIGIN)) url
+        else downloadBase + url.removePrefix(HF_ORIGIN)
+
+    /** ⚠ Trailing slash guaranteed; blank falls back to the default. */
+    private fun normalise(value: String): String {
+        val t = value.trim()
+        if (t.isEmpty()) return HF_ORIGIN
+        return if (t.endsWith("/")) t else "$t/"
+    }
+
+    // ---- low RAM: upstream local-dream's three Settings switches -----------
+
+    /**
+     * ⭐⭐ **SDXL low RAM, Anima low RAM, Anima sequential DiT** — upstream's own
+     * Settings (`sdxl_lowram`, `anima_lowram`, `anima_seq_dit`, same keys). They
+     * were forced per catalogue entry here until 2026-09-28, which put a 16 GB
+     * phone in the slow mode with no live preview for no reason (`docs/DEVICES.md` §6c).
+     *
+     * ⚠ An app SETTING, never a node param: a node param is saved into shared
+     * flows and would carry one phone's choice to another ([Residency]'s argument,
+     * which is about nodes and does not reach this).
+     *
+     * ⭐ Unset means the DEFAULT, computed from this phone's RAM rather than stored:
+     * the two low-RAM switches are on below [LOWRAM_BELOW_BYTES] — upstream's hint
+     * says they are "required on devices with less than 16GB RAM", and upstream
+     * defaults them on everywhere. ⚠ Sequential DiT stays OFF by default, as
+     * upstream has it: its own hint says to enable it only when low RAM mode alone
+     * still cannot run, and it is slower per step.
+     *
+     * ⚠ Read from storage at every LAUNCH ([lowRamFor]) rather than from a loaded
+     * copy, because a headless `OpService` op launches backends without ever
+     * running [load].
+     */
+    const val KEY_SDXL_LOWRAM = "sdxl_lowram"
+    const val KEY_ANIMA_LOWRAM = "anima_lowram"
+    const val KEY_ANIMA_SEQ_DIT = "anima_seq_dit"
+
+    /**
+     * ⭐ Video: stream the model (1.6.193, GitHub #48; OFF by default, ours, not upstream's). Every Wan clip runs
+     * under a budget with `all=disk`, as v75 always does ([wanStream], `WanVideoNode.memoryBudget`): a OnePlus
+     * 8 Elite (16 GB, so never budgeted) rendered every clip as a colour grid with the DiT resident, and on v75 the
+     * resident run was the noisy one and the streamed run clean (`docs/VIDEO-GGML.md` §4). ~30% slower, so never
+     * the default: the S25 is clean resident.
+     */
+    const val KEY_WAN_STREAM = "wan_stream"
+
+    /**
+     * ⚠ [KEY_WAN_STREAM] held in memory: a Wan node's launch key reads it with no Context
+     * (`WanVideoNode.keyFor`). Loaded by [load], kept in step by [setLowRam].
+     */
+    @Volatile var wanStream: Boolean = false
+        private set
+
+    /** ⭐ Pause a video render while the battery is hot ([BatteryHeat], Saved #7354, the user 2026-10-30): opt-in. */
+    const val KEY_HEAT_PAUSE = "heat_pause"
+
+    /** ⚠ [KEY_HEAT_PAUSE] held in memory: a node's run reads it with no Context. Loaded by [load], set by [setLowRam]. */
+    @Volatile var heatPause: Boolean = false
+        private set
+
+    /** ⭐ A sound (and a notification out of sight) when a run of 15 s or more ends ([RunAlert], GitHub #79): opt-in. */
+    const val KEY_RUN_SOUND = "run_sound"
+
+    /** ⚠ [KEY_RUN_SOUND] held in memory, as [heatPause]. */
+    @Volatile var runSound: Boolean = false
+        private set
+
+    /** ⭐ The RAM readout shows the chip's temperatures, CPU, GPU and NPU ([ChipTemps], GitHub #78), not the battery's. */
+    const val KEY_CHIP_TEMPS = "chip_temps"
+
+    /** ⚠ [KEY_CHIP_TEMPS] held in memory, as [heatPause]. */
+    @Volatile var chipTemps: Boolean = false
+        private set
+
+    /** ⭐ The chosen sounds' URIs, one per outcome; none = the phone's default notification sound. */
+    const val KEY_RUN_SOUND_DONE = "run_sound_done"
+    const val KEY_RUN_SOUND_FAILED = "run_sound_failed"
+
+    fun runSoundUri(context: Context, key: String): String? =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString(key, null)
+
+    fun runSoundDone(context: Context): String? = runSoundUri(context, KEY_RUN_SOUND_DONE)
+
+    fun runSoundFailed(context: Context): String? = runSoundUri(context, KEY_RUN_SOUND_FAILED)
+
+    fun setRunSoundUri(context: Context, key: String, uri: String?) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(key, uri).apply()
+    }
+
+    /** ⭐ The DiT models on the GPU on any phone ([DitGpu], the user 2026-10-31): opt-in; automatic below v73. */
+    const val KEY_DIT_GPU = "dit_gpu"
+
+    /**
+     * ⭐ On by default where the NPU's matrix unit is broken: the 8s Gen 4 and 8s Gen 3 run a DiT on the NPU's vector
+     * units only, 25 to 45 times slower for big matmuls (GitHub #105), and a tester there found the GPU faster. The
+     * user's call (2026-11-21), so a person need not find the setting. Turned off by hand, it stays off.
+     */
+    fun ditGpuDefault(soc: String = DeviceProbe.soc()): Boolean = soc.uppercase().substringBefore(' ') in GPU_FIRST_SOCS
+
+    /** The 8s Gen 4 and 8s Gen 3 ([DeviceProbe.DIT_NO_HMX_SOCS], less the v69 chips, which take the GPU anyway). */
+    internal val GPU_FIRST_SOCS = setOf("SM8735", "SM8635")
+
+    /** ⚠ [KEY_DIT_GPU] held in memory: [DitGpu.wanted] is read with no Context. Loaded by [load], set by [setLowRam]. */
+    @Volatile var ditGpu: Boolean = false
+        private set
+
+    /**
+     * ⭐ An 8 Gen 1's DiT on its NPU, a trial and off by default: every one so far hung there ([BackendProcess.ditOnCpu]),
+     * and HexAnima's notes blame more than 3 HVX workers + main on v69. Shown only on such a chip.
+     */
+    const val KEY_V69_NPU = "dit_v69_npu"
+
+    /** ⚠ [KEY_V69_NPU] held in memory, as [ditGpu]. */
+    @Volatile var v69Npu: Boolean = false
+        private set
+
+    /** ⭐ On the GPU route, the tiny decoder instead of the VAE ([DitGpu.Tae], the user 2026-10-31): on by default. */
+    const val KEY_DIT_TAESD = "dit_fast_decoder"
+
+    /** ⚠ [KEY_DIT_TAESD] held in memory, as [ditGpu]. */
+    @Volatile var ditTaesd: Boolean = true
+        private set
+
+    /**
+     * ⭐ Spectrum (GitHub #98, the user's call 2026-11-10: a setting, off by default): from step 5 on, an Anima render of
+     * 8 steps or more predicts some steps from the earlier ones instead of running the DiT (`dit/094`'s
+     * `NM_SPECTRUM`, sd.cpp's own cache). Anima Turbo 10 steps on the S25: 20-26 % faster, the same composition, a
+     * little softer (PSNR 22-27 dB against off). Anima and MOSS-Image, the families measured ([BackendProcess.SPECTRUM_FAMILIES]).
+     */
+    const val KEY_DIT_SPECTRUM = "dit_spectrum"
+
+    /** ⚠ [KEY_DIT_SPECTRUM] held in memory, as [ditGpu]: a launch reads it with no Context. */
+    @Volatile var ditSpectrum: Boolean = false
+        private set
+
+    /**
+     * ⭐ What made a picture written into it when it is saved or shared ([PngInfo], GitHub #106): ON by default (the
+     * user's call 2026-11-14), a switch for people who would rather not carry their prompts in their files.
+     */
+    const val KEY_PNG_INFO = "png_info"
+
+    @Volatile var pngInfo: Boolean = true
+        private set
+
+    /**
+     * ⭐ Each model's flow keeps its edits when another is opened, and gets them back when it is opened again (the
+     * per-flow drafts, the user's call 2026-10-29). Off: every flow opens fresh. ⚠ A SAVED flow never has a draft
+     * either way (the user, 2026-11-14, Saved #8050): opened from Flows, it is what was saved.
+     */
+    const val KEY_KEEP_FLOW_EDITS = "keep_flow_edits"
+
+    @Volatile var keepFlowEdits: Boolean = true
+        private set
+
+    /**
+     * ⭐ A thin credit strip under every SHARED picture ([ShareCredit]; the user, 2026-11-14: on by default, so shares
+     * carry the app's name). Not on a gallery save, a clip or a shared flow.
+     */
+    const val KEY_SHARE_CREDIT = "share_credit"
+
+    @Volatile var shareCredit: Boolean = true
+        private set
+
+    /**
+     * ⭐ A shared picture also sends how it was made (the A1111 text: prompt, negative, model, seed, steps...) as the
+     * message's text, which chat apps show as its caption (the user, 2026-11-14). OFF by default: a prompt is the
+     * person's own, and the switch says what it sends. One picture at a time; a selection shares pictures only.
+     */
+    const val KEY_SHARE_TEXT = "share_text"
+
+    @Volatile var shareText: Boolean = false
+        private set
+
+    /** ⭐ The optional name in that strip: blank says "Made with Nightmare Mobile". */
+    const val KEY_SHARE_NAME = "share_name"
+    const val SHARE_NAME_MAX = 30
+
+    @Volatile var shareName: String = ""
+        private set
+
+    fun setShareName(context: Context, value: String) {
+        shareName = value.trim().take(SHARE_NAME_MAX)
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString(KEY_SHARE_NAME, shareName).apply()
+    }
+
+    /**
+     * ⚠ 13 GiB, between the classes rather than at "16": a 12 GB phone reports
+     * ~10.9–11.4 GiB of `totalMem` and a 16 GB one ~14.5–15 GiB, the rest being
+     * reserved before Android sees it.
+     */
+    const val LOWRAM_BELOW_BYTES = 13L shl 30
+
+    /**
+     * ⚠ 10 GiB: the 12 GB class's floor, between it (~10.9–11.4 GiB of `totalMem`) and the 8 GB
+     * class (~7.3 GiB). What a model needing "a 12 GB phone" is gated on (Krea 2, 2026-10-14).
+     */
+    const val RAM_12GB_CLASS_BYTES = 10L shl 30
+
+    /** ⚠ The phone class a [minRamBytes] gate names to a person: 16 at [LOWRAM_BELOW_BYTES], else 12. */
+    fun ramClassGb(minRamBytes: Long): Int = if (minRamBytes >= LOWRAM_BELOW_BYTES) 16 else 12
+
+    data class LowRam(
+        val sdxl: Boolean,
+        val anima: Boolean,
+        val animaSeqDit: Boolean,
+        val wanStream: Boolean = false,
+        val heatPause: Boolean = false,
+        val runSound: Boolean = false,
+        val chipTemps: Boolean = false,
+        val ditGpu: Boolean = false,
+        val v69Npu: Boolean = false,
+        val ditTaesd: Boolean = true,
+        val ditSpectrum: Boolean = false,
+        val pngInfo: Boolean = true,
+        val keepFlowEdits: Boolean = true,
+        val shareCredit: Boolean = true,
+        val shareText: Boolean = false,
+    )
+
+    /** ⚠ Unknown RAM (0) answers ON — the safe side is the slow mode, never the kill. */
+    fun lowRamDefault(totalRamBytes: Long): Boolean =
+        totalRamBytes <= 0L || totalRamBytes < LOWRAM_BELOW_BYTES
+
+    private fun totalRam(context: Context): Long {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            ?: return 0L
+        return android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.totalMem
+    }
+
+    fun lowRam(context: Context): LowRam {
+        val p = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+        val def = lowRamDefault(totalRam(context))
+        fun read(key: String, fallback: Boolean) =
+            if (p.contains(key)) p.getBoolean(key, fallback) else fallback
+        return LowRam(
+            sdxl = read(KEY_SDXL_LOWRAM, def),
+            anima = read(KEY_ANIMA_LOWRAM, def),
+            animaSeqDit = read(KEY_ANIMA_SEQ_DIT, false),
+            wanStream = read(KEY_WAN_STREAM, false),
+            heatPause = read(KEY_HEAT_PAUSE, false),
+            runSound = read(KEY_RUN_SOUND, false),
+            chipTemps = read(KEY_CHIP_TEMPS, false),
+            ditGpu = read(KEY_DIT_GPU, ditGpuDefault()),
+            v69Npu = read(KEY_V69_NPU, false),
+            ditTaesd = read(KEY_DIT_TAESD, true),
+            ditSpectrum = read(KEY_DIT_SPECTRUM, false),
+            pngInfo = read(KEY_PNG_INFO, true),
+            keepFlowEdits = read(KEY_KEEP_FLOW_EDITS, true),
+            shareCredit = read(KEY_SHARE_CREDIT, true),
+            shareText = read(KEY_SHARE_TEXT, false),
+        )
+    }
+
+    fun setLowRam(context: Context, key: String, on: Boolean) {
+        if (key == KEY_WAN_STREAM) wanStream = on
+        if (key == KEY_HEAT_PAUSE) heatPause = on
+        if (key == KEY_RUN_SOUND) runSound = on
+        if (key == KEY_CHIP_TEMPS) chipTemps = on
+        if (key == KEY_DIT_GPU) ditGpu = on
+        if (key == KEY_V69_NPU) v69Npu = on
+        if (key == KEY_DIT_TAESD) ditTaesd = on
+        if (key == KEY_DIT_SPECTRUM) ditSpectrum = on
+        if (key == KEY_PNG_INFO) pngInfo = on
+        if (key == KEY_KEEP_FLOW_EDITS) keepFlowEdits = on
+        if (key == KEY_SHARE_CREDIT) shareCredit = on
+        if (key == KEY_SHARE_TEXT) shareText = on
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean(key, on).apply()
+    }
+
+    /**
+     * ⭐ Whether a launch of [spec] passes `--lowram`. SDXL and Anima follow the
+     * switches; every other family keeps its catalogue entry's own answer
+     * ([ModelSpec.lowram] — Z-Image's `te=disk`; Qwen is `all=disk` in the backend
+     * whatever this says).
+     */
+    fun lowRamFor(context: Context, spec: ModelSpec): Boolean = when (spec.family) {
+        Family.SDXL, Family.SDXL_SWAP -> lowRam(context).sdxl || forcesSdxlLowRam(totalRam(context))
+        Family.ANIMA -> lowRam(context).anima
+        else -> spec.lowram
+    }
+
+    /**
+     * ⭐⭐ SDXL low RAM is not optional below [LOWRAM_BELOW_BYTES] (the user's call, 2026-11-10; upstream's hint
+     * says "required on devices with less than 16GB RAM"). The S25 (12 GB) with the switch off launched SDXL without
+     * `--lowram`: both MNN CLIP sessions held (RSS 3.1 GB) beside the UNet's ~2.5 GB context, MemAvailable 6.6 to
+     * 0.9 GB in 20 s, lmkd reaped the person's apps and then this one (LIST-N4 item 39; an S24 Ultra tester's phone
+     * rebooted the same way). ⚠ Unknown RAM (0) is [lowRamDefault]'s business, not this one.
+     */
+    fun forcesSdxlLowRam(totalRamBytes: Long): Boolean = totalRamBytes in 1 until LOWRAM_BELOW_BYTES
+
+    /** ⭐ The switch is off but this phone runs SDXL in low RAM mode anyway: the run log says so. */
+    fun sdxlLowRamOverridden(context: Context): Boolean =
+        !lowRam(context).sdxl && forcesSdxlLowRam(totalRam(context))
+}
+
+/**
+ * ⭐⭐ The six destinations of the shell (the user's design, 2026-10-08 — Violet Studio): the
+ * library's three, then the three views of one flow. ⚠ The ORDER is the 3 × 2 tile grid's.
+ */
+enum class MainView {
+    MODELS, FLOWS, RESULTS, AGENT, NODES, GRAPH;
+
+    /** ⭐ A view of the flow (Agent · Nodes · Graph), not a library destination. */
+    val isCanvas get() = this == AGENT || this == NODES || this == GRAPH
+}

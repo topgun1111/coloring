@@ -1,0 +1,3 @@
+Delete .github/workflows/guide.yml and any older APK workflow (e.g. build-apk.yml) from your GitHub repository. Keep android-apk.yml. Keep dit-engine.yml only if you still need manual native backend builds.
+
+The ZIP contains changed/new files only; deletion of existing GitHub files must be done in your repository.
