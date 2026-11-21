@@ -115,17 +115,6 @@ jobs:
             }
           done
           echo "$tag" > app/src/main/cpp/third_party/quickjs/VERSION
-      - name: Verify QAIRT QNN headers
-        shell: bash
-        run: |
-          set -euo pipefail
-          header=app/src/main/cpp/include/QNN/QnnBackend.h
-          if [[ -s "$header" ]]; then
-            echo 'QNN headers available.'
-          else
-            echo '::error::QNN headers are absent. The project requires QAIRT SDK 2.49.0.260730. Supply its include/QNN directory through an authorized SDK installation before native compilation.'
-            exit 1
-          fi
       - name: Fetch QAIRT QNN headers (pinned 2.49.0.260730)
         shell: bash
         run: |
@@ -165,6 +154,17 @@ jobs:
           finally:
               archive.unlink(missing_ok=True)
           PYCODE
+      - name: Verify QAIRT QNN headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          header=app/src/main/cpp/include/QNN/QnnBackend.h
+          if [[ -s "$header" ]]; then
+            echo 'QNN headers available.'
+          else
+            echo '::error::QNN headers are absent. The project requires QAIRT SDK 2.49.0.260730. Supply its include/QNN directory through an authorized SDK installation before native compilation.'
+            exit 1
+          fi
       - name: Compile Kotlin and Android resources
         run: ./gradlew :app:compileDebugKotlin :app:processDebugMainManifest --stacktrace -PciVersionCode="$CI_VERSION_CODE" -PciVersionName="$CI_VERSION_NAME"
       - name: Run unit tests with full Robolectric diagnostics
